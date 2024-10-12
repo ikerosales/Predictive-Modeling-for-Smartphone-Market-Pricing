@@ -1,0 +1,1632 @@
+---
+title: "Project2: SMARTPHONES PRICE PREDICTION"
+author: "Iker Rosales"
+date: '2022-12-09'
+output: 
+html_document:
+  toc: true
+  toc_depth: 2
+---
+
+![](moviles.jpg)
+
+Smatphones Price Prediction. This dataset contains a collection of smartphones with their specifications that contain relevant information for classifiction and regression. The features are described by its own name so it does not worth to explain each of it. Some of them are:
+
+-   Storage(GB)
+
+-   RAM memory(MB)
+
+-   Wi.Fi
+
+-   GPS
+
+-   Price
+
+-   Processors
+
+-   SIM slots
+
+-   ...
+
+The project is going to be centered on the classification and regression of the Price variable. It will be divided in factors in the first part of the project, and it will be numeric in the second part, as it was explained in class.
+
+It is important to remark that the parts 2 and 3 and 4 and 5 are mixed respectively, since it was easier to explain "all in one" to then justify with the predictions.
+
+So once that is
+
+# DATA PREPROCESSING AND FEATURE EXTRACTION
+
+```{r}
+library(tidyverse)
+setwd("~/UC3M/Statistical Learning/project2")
+
+data = read.csv("ndtv_data_final.csv")
+glimpse(data)
+str(data)
+
+names = data$Name
+brands = data$Brand
+
+#Strings changed to Factors
+data$Touchscreen = as.factor(data$Touchscreen)
+data$Wi.Fi = as.factor(data$Wi.Fi)
+data$Bluetooth = as.factor(data$Bluetooth)
+data$GPS = as.factor(data$GPS)
+data$X3G = as.factor(data$X3G)
+data$X4G..LTE = as.factor(data$X4G..LTE)
+```
+
+![](RMI_to_eur.jpg)
+
+As we are not used to Indian Rupees, it would be more clear to change to Euros :
+
+```{r}
+data$Price = round(data$Price*0.0113,1)
+```
+
+```{r}
+#unique(data$Number.of.SIMs)
+#Only 3 levels of Numbre.Of.SIMs so it can be recognised as a Factor
+data$Number.of.SIMs = as.factor(data$Number.of.SIMs)
+
+data = data %>% dplyr::select(!c(X,Model,Name,Brand,))
+
+
+#FE of some columns in case it is useful in the future
+data = data %>% mutate(both_cameras = Rear.camera + Front.camera)
+
+tot_resolution = paste0(data$Resolution.x,"x",data$Resolution.y)
+
+
+summary(data)
+
+
+#numeric data 
+
+data_numeric = data %>% dplyr::select(where(is.numeric))
+```
+
+## NAs
+
+```{r}
+library(mice)
+md.pattern(data,rotate.names = T)
+
+```
+
+##NAs removal In our case, the dataset do not have NAs in any of its columns as it can be seen in the previous step.
+
+Anyway downwards are described the steps we would have to follow in order to eliminate/predict them.
+
+We could substitute the values by the median of each category: (Imagine Front.Camera had NAs)
+
+```{r}
+#data$Front.camera[is.na(data$Front.camera)]=median(data$Front.camera,na.rm = T)
+```
+
+By multiple imputation:
+
+```{r}
+# mult_imp = mice(data, method = "rf")
+# obj_mult_imp = complete(mult_imp)
+# 
+# data$Front.camera[is.na(data$Front.camera)] = obj_mult_imp$Front.Camera[is.na(data$Front.camera)]
+```
+
+By a Linear Model:
+
+```{r}
+# linear_model = lm(Front.camera ~ log(RAM..MB.) + Operating.system + Rear.camera, data = data[!is.na(data$Front.camera),])
+# 
+# data$Front.camera[is.na(data$Front.camera)] = predict(linear_model, newdata = data[is.na(data$Front.camera),])
+```
+
+## Outliers
+
+When NAs are removed, we need to consider outliers, so we create a boxplot to analyse the distribution of each variable.
+
+```{r}
+boxplot(data_numeric, las = 2) #Not useful since it has no normalization
+
+par(mai=c(1.8,0.5,0.5,0.5))
+boxplot(scale(data_numeric), las = 2, col = rainbow(11)) 
+```
+
+It is easy to see some outliers in some of the numeric variables of the graph.
+
+Since the features oscillates between the values correctly, I have considered the decission of not removing SOME of the outliers because of the following reasons:
+
+-There are non erroneous data in any of the columns. With the expression erroneus data it is meant that there are no values that do not concord with the nature of each variable. (e.g. There are no negative processors or RAM memory)
+
+In case we had it we would have to remove it
+
+```{r}
+# data = data  %>% filter(variable_needed>0)
+```
+
+-Although Price presents lots of outliers it is the target variable of the project and it is logical that some of the prices of some products are big or small.
+
+-With cameras, it is more than the same, extreme values are not removed because there are smartphones that have far more camera resolution than others.
+
+The code if we removed all the outliers will be:
+
+```{r}
+# library(outliers)
+
+#If we want to remove the outliers of every column:
+# for (j in 1:ncol(data_numeric){
+#   Q_1 = quantile(data_numeric[,i],1/4)
+#   Q_3 = quantile(data_numeric[,i],3/4)
+#   IQR = Q_3-Q_1
+# 
+#   data = data[data_numeric[,i]>(Q1-1.5*IQR) & data_numeric[,i]<(Q3+1.5*IQR),]
+# }
+
+#If we only want to remove it from one column we do the upper process only with the i of the row
+
+# Or with outliers library
+# i.e. outliers::outlier(data$Rear.camera)
+
+#numeric selection for analysis
+```
+
+## Visualization
+
+The analysis of the variable it is going to be used is:
+
+```{r}
+library(ggplot2)
+ggplot()+aes(x = data$Price, y = ..density..)+
+  geom_histogram(fill = "black",alpha = 0.5)+geom_density(fill = "lightgreen",alpha = 0.5)+xlim(c(0,1000))
+#3 extreme values remvoed for better visualization.
+```
+
+There we can see that most of the mobiles are valued in the interval [0,25.000] Rp
+
+```{r}
+library(tidyverse)
+library(caret)
+library(e1071) 
+
+
+featurePlot(x = data_numeric[,-10], y = data$Price, layout = c(5,2))
+
+
+featurePlot(x = lapply(data %>% dplyr::select(where(is.factor)),as.numeric,MARGIN = 2), y = data$Price,
+            layout = c(4,2), plot = "scatter")
+
+#factors can also be seeen with jitter plots
+ggplot()+ aes(x = data$Wi.Fi, y = data$Price) + geom_jitter()
+ggplot()+aes(y = data$X4G..LTE , x = data$Price) + geom_jitter()
+```
+
+There can be seen some direct proportionality between several features such as Resolution or battery cappacity with the Price variable.
+
+Factors can also be represented in a feature plot but they do not show such important information.
+
+It is easy to appreciate that the mobiles that have 4G or Wi.Fi costs more money than those that do not have it.
+
+```{r}
+ggplot()+aes(fill = data$Number.of.SIMs, x = data$Price)+geom_density(alpha = 0.3)
+```
+
+It is significant to notice the strange evolution of the previous graph since devices with 1 SIM slots are more expensive than the devices with 2 of them. Devices with 3 slots are not even appreciated since there are less than 2 in this database.
+
+```{r}
+
+ggplot(data)+aes(x = GPS, y = X4G..LTE)+geom_tile(aes(fill=Price))+
+  labs(title = "Average price in terms of 4G connection and GPS")+scale_fill_viridis_c(trans = "log")
+```
+
+Easy to see that the more "expensive" mean prices are the ones that have both GPS and 4G
+
+```{r}
+ggplot()+aes(x = 1,fill = data$Touchscreen)+geom_bar(position = position_fill())+coord_polar(theta = "y")+
+  scale_fill_discrete(name="TOUCHSCREEN")+
+  geom_label(aes(x =1, y =0.5,label= paste0(round(100*sum(data$Touchscreen=="Yes")/sum(nrow(data)),2),"%")),color="black",size=5,fill="lightblue")+
+  geom_label(aes(x =1, y =0,label= paste0(round(100*sum(data$Touchscreen=="No")/sum(nrow(data)),2),"%")),color="black",size=5,fill="coral")+
+  labs(x= "", y = "", title = "% of devices with Touchable Screen")
+  
+```
+
+Really few devices without Touchscreen.
+
+```{r}
+ggplot()+aes(x = fct_infreq(brands))+geom_bar(color = "black", fill = "chartreuse3")+theme(axis.text.x = element_text(angle = 90, vjust = 0.3, size = 8))
+```
+
+Devices brands with most appearences are Intex, Samsung and Microm.
+
+```{r}
+ggplot(data)+aes(x = Operating.system, y = Price, fill = Operating.system)+geom_boxplot()+theme(legend.position = "none")
+```
+
+The graph shows how iOS present the most expensive Software. iOS is the company of Apple and it is well known that these devices are used to be the most expensive ones.
+
+Sailfish and Tizen are not really represented since we do not have enough devices of them (1 and 3 respectively).
+
+It is better to remove them for the modeling part
+
+```{r}
+table(data$Operating.system)
+#removing few appearances since it does not help in anything:
+brands = brands[!(data$Operating.system=="Sailfish"|data$Operating.system=="Tizen"|data$Number.of.SIMs==3)]
+names = names[!(data$Operating.system=="Sailfish"|data$Operating.system=="Tizen"|data$Number.of.SIMs==3)]
+tot_resolution = tot_resolution[!(data$Operating.system=="Sailfish"|data$Operating.system=="Tizen"|data$Number.of.SIMs==3)]
+data_numeric = data_numeric[!(data$Operating.system=="Sailfish"|data$Operating.system=="Tizen"|data$Number.of.SIMs==3),]
+data = data[!(data$Operating.system=="Sailfish"|data$Operating.system=="Tizen"|data$Number.of.SIMs==3),]
+data$Number.of.SIMs = factor(data$Number.of.SIMs)
+data$Operating.system = factor(data$Operating.system)
+```
+
+```{r}
+ggplot(data)+aes(x = Rear.camera, y = Front.camera)+ geom_count(color  ="chartreuse3")+geom_smooth(method = "lm")
+```
+
+```{r}
+ggplot()+geom_density(aes(x=data$Resolution.x, y = ..density.., fill = "X-Resolution"))+
+  geom_density(aes(x=data$Resolution.y, y =-..density..,fill = "Y-Resolution"))+labs(x="Resolution")+
+  scale_fill_discrete(name = "RESOLUTION")
+```
+
+As devices are usually longer than wider it is normal that the most frequent values of X resolution are lower than Y resolution. The most frequent X value is located near 800 and Y value near 1300.
+
+```{r}
+ggplot(data)+aes(x=Rear.camera, y = Front.camera)+geom_point(aes(color = Price))+scale_color_continuous(trans = "log")
+```
+
+There can be appreciated the direct relation between the back and Front camera.
+
+Furthermore, it is well graphed that with the increase on the MP of the cameras, the mobile prices increases
+
+```{r}
+ggplot(data %>% filter(brands %in% c("Intex","Samsung","Apple","Micromax","Xiaomi","Lava")))+aes(x=Screen.size..inches.,
+                                                                                                 y=brands[brands %in% c("Intex","Samsung","Apple","Micromax","Xiaomi","Lava")])+
+  geom_violin(alpha = 0.3, fill = "grey")+
+  geom_jitter(aes(color = Price))+scale_color_viridis_c(trans = "log")+
+  labs(title = "TOP BRANDS SCREEN SIZE DISTRIBUTION & PRICE", y = "TOP BRANDS")
+```
+
+It was selected with the filter the most known brands of the dataset and the comparison with their size show how the Apple, Samsung and Xiaomi phones are related with the bigger screen diagonal.
+
+Moreover, price was plotted as jitter dots and it is shown in brighter colors the most expensive ones surrounding the Apple and Samsung boxplots, that are globally known as the most expensive brands.
+
+```{r}
+set.seed(1)
+splits_1 = createDataPartition(data$Price, p = 4/5, list = FALSE)
+train_data = data[splits_1,]
+test_data = data[-splits_1,]
+```
+
+# CLASSIFICATION
+
+For the classification of the variable that is wanted to be predicted, it is needed to cut into factors.
+
+The decission is to divide in 2 different groups:
+
+-   EXPENSIVE -\> Mobiles that cost more than 120€
+
+-   CHEAP -\> Mobiles that cost less or equal than 120€
+
+(As a remainder, we have to assume these dataset is extracted from INDIA, where the economical situation is not as good as in Europe. It is assumed then that their budget when buying an smartphone is lower)
+
+But first, let's make a first analysis of the correlation of the numeric values within the variable we want to analyse(ALTHOUGH THIS PART IS LOCATED IN THE CLASSIFICATION PART, IT IS ONLY THE FIRST APPROACH AS AN INTRODUCTION, SO IT WILL BE REPEATED IN THE REGRESSION PART):
+
+```{r}
+ggplot()+aes(x=cor(data_numeric)["Price",], y = reorder(names(cor(data_numeric)["Price",]), 
+                                                         cor(data_numeric)["Price",])) +
+  geom_col(fill = "chartreuse3")+labs(x="CORRELATION",y="VARS")
+```
+
+The variables that presents most correlation within the price are Storage, RAM and Screen Resolution that indeed are one of the most important features in smartphones evaluation.
+
+The correlation within the variables are:
+
+```{r}
+library(GGally)
+ggcorr(data, label = T)
+```
+
+There are some extreme correlations that have sense such as Resolution in both axis and the correlation between both_cameras with each of the cameras.
+
+As a first approach to our dataset and before separating in factors, it can be analysed a multiple regression with for example 3 variables.
+
+```{r}
+st_approach = lm(Price ~ Internal.storage..GB. + X3G + both_cameras, data = train_data)
+summary(st_approach)
+```
+
+The $R^2$ obtained is not that bad since the model was created with random variables chosen. The $R^2$ obtained between the predicted values and the actual values will be:
+
+```{r}
+cor(predict(st_approach, newdata=test_data),test_data$Price)^2
+```
+
+This value is not higher than in the training test but it is not normal since the model is adjusted for the train dataset.
+
+```{r}
+orig_price = data$Price
+
+data$Price[data$Price>120]="EXPENSIVE"
+data$Price[data$Price!="EXPENSIVE"]="CHEAP"
+data$Price = as.factor(data$Price)
+levels(data$Price)
+
+table(data$Price)
+```
+
+In the table it can be seen that there are much more Cheap devices than Expensive ones.
+
+The data is not really well-balanced.
+
+### Few Visualization for price in factors
+
+```{r}
+ggplot(data)+aes(x = Price)+geom_bar(aes(fill = as.factor(Processor)), position = position_fill())+labs(x = "PRICE")+scale_fill_discrete(name = "PROCESSORS")
+```
+
+We can see that expensive mobiles ussually have more processors than cheap ones.
+
+```{r}
+ggplot(data)+aes(x = Rear.camera, y = Front.camera)+geom_point(aes(color = Price,shape = X4G..LTE))+scale_shape_manual(values = c(15,3))
+```
+
+Slightly more expensive smartphones have 4G since we can see less red crosses.
+
+Splitting:
+
+```{r}
+splits_2 = createDataPartition(data$Price, p = 4/5, list = FALSE)
+train_data2 = data[splits_2,]
+test_data2 = data[-splits_2,]
+```
+
+As a Benchmark model used for the 1st approach
+
+```{r}
+max(table(test_data2$Price))/nrow(test_data2)
+```
+
+This benchmark model is kind of the lower accuracy that can be reached in our models.
+
+Since it represents the most frequent outcome in prediction.
+
+This model will clasify as CHEAP with a 71% of probability
+
+## BAYES CLASSIFICATION
+
+### LDA
+
+At first, it is performed a Linear Discriminant Analysis(LDA) is performed.
+
+```{r}
+library(MASS)
+lda_1 = lda(Price ~., data = train_data2, prior = c(0.8,0.2))
+lda_1
+```
+
+Note we only have 2 groups so there is only LD1 coefficient obtained.
+
+So LD1 has the whole proportion of trace 1.
+
+Notice that iOS operating System is the feature that contributes the most to LD1 since it is carried in the most expensive smartphones
+
+```{r}
+res_lda_1 = predict(lda_1, newdata = test_data2)
+head(res_lda_1$posterior)
+prob_lda = res_lda_1$posterior
+```
+
+The classification probabilities are in general really high so that means that the model is expected to work well.
+
+```{r}
+conf_lda1 = confusionMatrix(res_lda_1$class, test_data2$Price)
+conf_lda1
+```
+
+So the accuracy obtained is really good for the model. Reaching near 0.85. But LDA is not the best model for classification in 2 groups.
+
+If we did not include prior, the class proportions for the training set will be used so:
+
+```{r}
+lda_wo_prior = lda(Price ~., data = train_data2)
+
+conf_lda_2 = confusionMatrix(predict(lda_wo_prior,newdata=test_data2)$class,test_data2$Price)
+conf_lda_2
+```
+
+As proportions are taken from the exact training set, the accuracy of the model can increase.
+
+### QDA
+
+Trying with QDA could give a different approach since they are kind of the same method but in the Quadratic Discriminant Analysis it is asumed that the covariances matrices can be different in each of the classes(EXPENSIVE vs CHEAP), so it will be estimated separately.
+
+```{r}
+#qda_1 = qda(Price ~., data = train_data2) #prior I would use , prior = c(0.8,0.2)
+#qda_1
+```
+
+When trying QDA there is a rank deficiency problem in group CHEAP. This could means that there is insufficient information contained in the data to estimate the model
+
+The code to achieve the confusiosionMatrix of QDA would follow the same pattern.
+
+## Logistic Regression
+
+Another way to achieve Classification will be the Logistic Regression, that is said to be one of the best model for binary(2 classes) classification. It is also said to be the derivation of a multiple regression model to predict numerical values, but in this case, on discrete ones:
+
+```{r}
+set.seed(1)
+library(glmnet)
+log_reg = glm(Price~., data = train_data2, family = binomial)
+summary(log_reg)
+```
+
+The Fisher scoring iterations means indeed the number of repetitions taken to estimate all the parameters by the equations. That in this case is 15 since the number of parameters is really huge.
+
+So the model is kind of:
+
+$$log(p/(1-p)) = -0.19 -1,76*10^{-5}*batterycapacity -4.411*10^{-1}*Screen.size + ...$$
+
+Note: Errors are not taken into acount in this equation.
+
+```{r}
+prob_log_reg = predict(log_reg, type = "response", newdata = test_data2)
+prob_log_reg[1:10]
+```
+
+Most of this first data are classified as EXPENSIVE since the p is higher than 0.5.
+
+But indeed, this 0.5 setting is only a parameter placed by the user so it can be optimized in the following methods.
+
+```{r}
+prob_log_reg[prob_log_reg > 0.5] = levels(train_data2$Price)[2]
+prob_log_reg[prob_log_reg != levels(train_data2$Price)[2]] = levels(train_data2$Price)[1]
+prob_log_reg = as.factor(prob_log_reg)
+prob_log_reg[1:10]
+```
+
+The confusion matrix will finally show the accuracy within the whole test_data.
+
+```{r}
+conf_log_reg = confusionMatrix(prob_log_reg,test_data2$Price)
+conf_log_reg
+```
+
+The accuracy achieved is not that better in comparison to the LDA method, although this method is known to perform at its best with binary classification.
+
+This method also presents a derivation that is good to apply when datasets are large enough. It is named:
+
+### PENALIZED LOGISTIC REGRESSION.
+
+The name explains all his performance it tries to find a smaller set of variables of the model for suiting the most favorable model.
+
+In this case, we have learned **ridge classification** Log. Regression(since alpha = 0) that consist mainly in the minimization of the complexity in the model by squaring coefficients so the smaller ones are even closer to zero and so they do not "disturb" the modeling.
+
+In this dataset case, I personally think that this dataset does not fit correctly in this model since it is not large enough but it is going to be tried anyway.
+
+As a first approach alpha=0 -\> ridge regression and lambda =0.005 is settled
+
+```{r}
+#use of numeric data for this process:
+data_numeric = data_numeric %>% mutate(Price = factor(ifelse(Price>120,"EXPENSIVE","CHEAP")))
+splits_3 = createDataPartition(data_numeric$Price, p = 4/5, list = FALSE)
+train_data3 = data_numeric[splits_3,]
+test_data3 = data_numeric[-splits_3,]
+
+data_numeric = data_numeric %>% mutate(Price = orig_price)
+
+p_log_reg = glmnet(as.matrix(train_data3 %>% dplyr::select(-Price)),train_data3$Price, family = c("binomial"), alpha = 0, lambda = 0.005)
+summary(p_log_reg)
+
+prob_p_log_reg = predict(p_log_reg, as.matrix(test_data3 %>% dplyr::select(-Price)), type = "response")
+
+prob_p_log_reg[prob_p_log_reg > 0.5] = levels(train_data3$Price)[2]
+prob_p_log_reg[prob_p_log_reg != levels(train_data2$Price)[2]] = levels(train_data3$Price)[1]
+prob_p_log_reg = as.factor(prob_p_log_reg)
+
+conf_p_log_reg = confusionMatrix(prob_p_log_reg, test_data3$Price)
+conf_p_log_reg
+
+```
+
+Results obtained are really similar to the non penalized algorithm.
+
+Accuracy and Kappa did not really change significantly so we could confirm that both models work similarly in this data-set.
+
+## ROC curves
+
+Before continuing,lets do some roc curves to see how the sensitivitys and specificitys develop with different thresholds.
+
+```{r}
+library(pROC)
+#first we have to obtain the result in form of probabilities.
+roc.lda = roc(test_data2$Price,prob_lda[,2])
+
+#The area under the curve is better the bigger it is, since that means that the specificity and precisions are high.
+auc(roc.lda)
+
+plot.roc(test_data2$Price,prob_lda[,2],col="chartreuse3", print.auc = TRUE,  auc.polygon=TRUE, grid=c(0.1, 0.2), max.auc.polygon=TRUE,auc.polygon.col="grey80", print.thres=TRUE)
+```
+
+High area under the curve.
+
+We know that the closer the curve to the top left corner, the better. The optimal threshold is also provided,it is near 0.12 in this case The area under the curve is 0.901, so 90% and the values for the specificity are around 0.85 and 0.8 for the sensitivity.
+
+## NAIVE CLASSIFIER
+
+As we are a company, we would like to sell our mobiles extracting the most benefit out of them.
+
+So we can use the NAIVE CLASSIFIER to try for trying to maximize the company earnings.
+
+Our company is supposed to analyse mobile specifications from each manufacturer, buy their mobile phones and we sell them by the price we predict they are valued in our web page.
+
+We will have 4 cases:
+
+-   We predict that the mobile is Cheap, and we bought it Cheap: 10 benefit.
+
+-   We predict that the mobile is Cheap, and we bought it Expensive: -100 benefit.
+
+-   We predict that the mobile is Expensive, and we bought it Cheap: 150 benefit.
+
+-   We predict that the mobile is Expensive, and we bought it Expensive: 20 benefit
+
+So :
+
+| Pred(we sell as)/Ref(we bought as) | CHEAP | EXPENSIVE |
+|------------------------------------|-------|-----------|
+| CHEAP                              | 10    | -100      |
+| EXPENSIVE                          | 150   | 20        |
+
+In our case, the Naive classifier will look:
+
+$$BENEFITS = 10*0.72+20*0.28-100*0+150*0 = 12.8€$$
+
+This NAIVE CLASSIFIER BENEFIT has to be maximized with the algorithms used all over the classification until now.
+
+So the benefits we want to obtained are contained in the vector:
+
+```{r}
+benef.smartphone = c(20,150,-100,10)
+```
+
+Benefits with ALGORITHMS TRIED UNTIL NOW:
+
+```{r}
+paste0("BENEFITS FOR LDA MODEL ARE: ",sum(as.vector(conf_lda1$table)*benef.smartphone)/sum(conf_lda1$table))
+paste0("BENEFITS FOR LDA MODEL W/O PRIOR ARE: ",sum(as.vector(conf_lda_2$table)*benef.smartphone)/sum(conf_lda_2$table))
+paste0("BENEFITS FOR LOG.REG MODEL ARE: ",sum(as.vector(conf_log_reg$table)*benef.smartphone)/sum(conf_log_reg$table))
+paste0("BENEFITS FOR PENALIZED LOG.REG ARE: ",sum(as.vector(conf_p_log_reg$table)*benef.smartphone)/sum(conf_p_log_reg$table))
+```
+
+The greatest benefit is obtained with the LDA and with the LOG.REG MODEL.
+
+But this is only with a fixed threshold, so if this threshold is optimized we can obtain then the best LDA model for our prediction:
+
+Threshold will flow from p = 0.05 to p = 1
+
+```{r}
+profits.lda = matrix(NA, 50, 10)
+
+j=0
+suppressWarnings(
+  for (threshold in seq(0.05,0.5,0.05)){
+  
+  j=j+1
+  
+  #30 iterations for each threshold setted
+  for(i in 1:50){
+    
+    sp = createDataPartition(train_data3$Price, p = 0.5, list = FALSE)
+    
+    train_data_op = train_data3[sp,]
+    test_data_op = train_data3[-sp,]  
+    
+    
+    lda_optim = lda(Price ~ ., data = train_data_op) #, prior = c(0.8,0.2)
+    
+    prob = predict(lda_optim,test_data_op)$posterior
+    
+    lda_pred_optim = rep("CHEAP", nrow(test_data_op))
+    lda_pred_optim[which(prob[,2] > threshold)] = "EXPENSIVE"
+    
+    conf_matrix_optim = confusionMatrix(as.factor(lda_pred_optim), test_data_op$Price)$table
+
+    profits.lda[i,j] = sum(benef.smartphone*as.vector(conf_matrix_optim))/sum(conf_matrix_optim)
+  }
+})
+```
+
+One obtained all the benefits in each threshold, we will make a violin plot to see which of the threholds gives best benefits independently of the data partition.
+
+This is interpreted as independent data partitions since we are having into account 50 different data partitions
+
+```{r}
+boxplot(profits.lda, names = seq(0.05,0.5,0.05))
+
+apply(profits.lda,2,median)
+```
+
+Now, let's try to optimize the threshold but with the Logistic Regression
+
+```{r}
+profits.glm = matrix(NA, 50, 10)
+
+j=0
+suppressWarnings(
+for (threshold in seq(0.05,0.5,0.05)){
+  j = j+1
+  for (i in 1:50){
+  sp = createDataPartition(train_data2$Price, p =0.75, list = F)
+  train_data_op = train_data2[sp,]
+  test_data_op = train_data2[-sp,]
+  
+  glm_optim = glm(Price~., data = train_data2, family = binomial)
+  
+  prob = predict(log_reg, type = "response", newdata = test_data2)
+  
+  prob[prob > threshold] = levels(train_data_op$Price)[2]
+  prob[prob != levels(train_data_op$Price)[2]] = levels(train_data_op$Price)[1]
+  prob= as.factor(prob)
+  
+  conf_glm = confusionMatrix(prob, test_data_op$Price)$table
+  profits.glm[i,j] = sum(as.vector(conf_glm)*benef.smartphone)/sum(conf_glm)
+  }
+}
+)
+apply(profits.glm,2,median)
+
+boxplot(profits.glm, names = seq(0.05,0.5,0.05))
+  
+```
+
+So finally the bet threshold for both methods are 0.05.
+
+## DECISION TREES
+
+For a first approach of our file information, we've made a decision tree of the whole data set, so we can begin to understand the relations between the predictors with the response and get a rough idea of the accuracy our future predictions can reach.
+
+```{r}
+library(rpart); library(rpart.plot)
+tree1 = rpart(Price~., data, method = "class", control = rpart.control(minsplit = 25, cp = 0.01, maxdepth = 8))
+tree1$variable.importance
+prp(tree1, type = 0, extra = 108, shadow.col="orange", digits = 3, roundint = FALSE, 
+                 faclen = 8, box.palette = "auto", varlen = 9)
+```
+
+In this case the variable 'Resolution.y' is the most important and that's why it composes the first node, because it is the most influential variable in our prediction having the responsabillity of the first split.
+
+The tree splits in several branches, depending on the parameters (min. split, complexity,max depth...). Depending on the number of observations of a variable that fulfill the condition, it will derive into leaves, with their correspondent prediction (EXPENSIVE or CHEAP), or nodes, with new split conditions.
+
+With the variable important plot we can see the importance in this tree. As I have explained, screen resolution in y axis is one of the main things to consider when classifying with this tree.
+
+It is significant to point out, how 40 % of the data is classified as cheap just because of the resolution.y and rear camera.
+
+Trying with different combination of hyper parameters we can reach different accuracies:
+
+```{r}
+library(caret)
+
+caret.tree = train(Price~.,
+                   data = train_data2,
+                   method = "rpart",
+                   control = rpart.control(minsplit = 30),#maxdepth = 10
+                   trControl = trainControl(method = "cv", number = 7),
+                   tuneLength = 50)
+caret.tree
+
+#plotting the final model chosen by the caret algorithm.
+prp(caret.tree$finalModel, type = 0, extra = 108, shadow.col="orange", digits = 3, roundint = FALSE, 
+                 faclen = 8, box.palette = "auto", varlen = 9)
+
+prob_tree = predict(caret.tree, test_data2, type = "prob")
+
+threshold = 0.05
+
+tree_pred = rep("CHEAP", nrow(test_data2))
+tree_pred[which(prob_tree[,2] > threshold)] = "EXPENSIVE"
+
+conf_tree = confusionMatrix(as.factor(tree_pred), test_data2$Price)$table
+conf_tree
+
+tree_benefits = sum(benef.smartphone*as.vector(conf_tree))/sum(conf_tree)
+tree_benefits
+```
+
+The tree achieved is really similar to the first one, so we can say that the initial approach was not that far from the final caret analysis.
+
+## Random Forest:
+
+Although the model achieved with the decision trees algorithm has a correct performance, it can be improved using the Random Forest algorithm.
+
+This model collects a defined number of trees "N" with several different splits and the final prediction of the Random Forest will be the majority of the final predictions of each of the trees when each data passes through them.
+
+Here, we are going directly to compute the "best model" of the random forest, trying to reach the best for the model by optimizing a function:
+
+```{r}
+Benefits = function(data, lev =  NULL, model = NULL){
+  prediction = data$pred
+  true_values = data$obs
+  conf= confusionMatrix(prediction,true_values)$table
+  returning = sum(benef.smartphone*as.vector(conf))/sum(conf)
+  names(returning) = "Benefits"
+  return(returning)
+}
+```
+
+Once the function we want to center the analysis is done it is implemented in the training
+
+```{r}
+
+rf_model = train(Price ~., method = "rf", data = train_data2, preProcess = c("center", "scale"), cutoff=c(0.75,0.25),tuneGrid = expand.grid(mtry=c(6,8,10,12,14)),ntree = 300, metric = "Benefits", maximize = T, trControl = trainControl(method = "cv", number = 5, classProbs = TRUE, summaryFunction = Benefits, verboseIter=T))
+```
+
+The best mtry parameter for a N = 200 trees is mtry = 14(max. number of variables that affects in each trees).
+
+```{r}
+plot(varImp(rf_model, scale = F), col = rainbow(18))
+```
+
+They measure the importance within the MeanDecreaseGini which is a metric that computes the mean of the loss in node impurity of a variable. This successfully measures the importance of the variables in estimating the value of Price (independent variable) for all the trees that make up the forest. The larger the average decrease in the Gini coefficient, the higher the importance of the variable.
+
+(Node impurity will be the lowest if all the results are the same (for example, if in Resolution.y split, all the data passing through that node are bigger than 1600, the node impurity will be 0. In contrast, if we have more cases than only "bigger than 1600" resolution, the node impurity will increase.)
+
+In the maximization of our prediction we obtained that the most important variable is still Resolution.y(as in the decision tree method).
+
+Surprisingly battery cappacity gain more importance in this method and it is place in the second position.
+
+Analysing this hyperparameter with RandomForest library we obtained:
+
+```{r}
+library(randomForest)
+rf_1=randomForest(Price ~., data = train_data2, ntree = 200,mtry = 14, method = "class")
+plot(rf_1, col = c(1,2,3),lwd = 1.6)
+legend(x = "topright",
+       legend = c("EXPENSIVE","OOB","CHEAP"),
+       lty = c(1,2,2),
+       col = c(1,2,3),
+       lwd = 2)
+```
+
+The graph shown by the upper code, displays a representation of the errors in the prediction of our model. In a deeper insight and as an example, the green line, shows the evolution of the error in the prediction of the expensive devices, whereas the red one shows it in predicting the cheap ones.
+
+Moreover, it is needed to clear out the OOB line. OOB is the number of correctly performed predictions of the Out of Bag rows. By way of clarification, the least errors the model have, the most accurate it will be.
+
+OOB rows are the ones that were not chosen in the sampling of data, therefore, their predictions could not perform correctly.
+
+```{r}
+threshold = 0.05
+prob_rf=predict(rf_model, newdata = test_data2, type = "prob")
+
+rf_pred = rep("CHEAP", nrow(test_data2))
+rf_pred[which(prob_rf[,2] > threshold)] = "EXPENSIVE"
+
+conf_rf = confusionMatrix(as.factor(rf_pred), test_data2$Price)$table
+
+rf_benefits = sum(benef.smartphone*as.vector(conf_rf))/sum(conf_rf)
+rf_benefits
+```
+
+We reached a higher value than in random Forest so the model maximizes better the benefits.
+
+## Gradient Boosting
+
+This model combines a group of weak machine learning models to create a stronger predictive models.
+
+with gbm function factors are need to be exchanged to 0(cheap) and 1(Expensive), so:
+
+```{r}
+#It does not work really well
+gbm_1 = gbm::gbm(ifelse(train_data2$Price=="CHEAP",0,1)~., data = train_data2, distribution = "bernoulli",
+                 n.trees = 300, shrinkage = 0.01, interaction.depth = 2, n.minobsinnode = 8)
+
+prob_gbm=predict(gbm_1, newdata = test_data2, n.trees = 300,type = "response")
+
+gbm_pred = rep("CHEAP", nrow(test_data2))
+gbm_pred[which(prob_gbm > 0.15)] = "EXPENSIVE" #Considered the threshold of the ROC curve in this case
+
+conf_gbm = confusionMatrix(as.factor(gbm_pred), test_data2$Price)$table
+
+conf_gbm
+
+gbm_benefits = sum(benef.smartphone*as.vector(conf_gbm))/sum(conf_gbm)
+gbm_benefits
+
+```
+
+With grid expansion the model is really complex so the execution is really large and that is why it is commented:
+
+```{r}
+# grid_for_gb = expand.grid(eta = c(0.01, 0.001), min_child_weight = c(1,3,6),max_depth = c(2, 4, 6,8,10),
+#                            colsample_bytree = c(0.2, 0.,3,0.4,0.5),subsample = 1,nrounds = c(500,1000),gamma = 1)
+# 
+# gb_model = train(Churn ~ .,  data=training,
+#                  trControl = trainControl(method = "cv", number = 5, classProbs = TRUE, summaryFunction = Benefits, verboseIter=T),metric="EconomicCost",tuneGrid = xgb_grid,preProcess = c("center", "scale"),maximize = TRUE,method = "xgbTree")
+# 
+
+```
+
+## FINAL CONCLUSION ON CLASSIFICATION
+
+Finally it is finished the process of CLASSIFICATION and the expected benefit of the NAIVE classifier has been positively improved.
+
+It is important to comment that some of the methods such as decission trees, did not even classify a data correctly since our ideal objective is to win money and then it is ideal to not wanting to sell something as cheap even if it is cheap because we do not get such a great benefit.
+
+A change in those parameters could obviously change the result on the threshold and consequently on the benefits too.
+
+As I said, it is not a real model with real data and it may have no lot of sense but it was only thought to try to see the performing of each algorithm and not the business case deeply.
+
+# REGRESSION
+
+Now, the case settles in Regression, that mainly consists on the combination of features in our dataset by several algorithms to reach a numerical value, so now it is the moment when all those factors created in Price variable are replaced by original prices.
+
+```{r}
+#this change it is not necessary but it is introduced for being able to work with both parts of the project simultaneusly.
+data_reg = data
+data_r_numeric = data_numeric
+data_reg$Price = orig_price
+data_r_numeric$Price = orig_price
+data_reg$Price = as.numeric(data_reg$Price)
+data_r_numeric$Price = as.numeric(data_r_numeric$Price)
+
+```
+
+At first, data splitting for working with continuous prices:
+
+```{r}
+sp_r = createDataPartition(data_reg$Price, p = 0.8, list = FALSE)
+train_reg = data_reg[ sp_r,]
+test_reg = data_reg[-sp_r,]
+```
+
+So as a remainder, let's see the correlation that conserve each of the features within the objective var.
+
+```{r}
+ggplot()+aes(x=cor(data_numeric)["Price",], y = reorder(names(cor(data_numeric)["Price",]), 
+                                                         cor(data_numeric)["Price",])) +
+  geom_col(fill = "chartreuse3")+labs(x="CORRELATION",y="VARS")
+```
+
+The correlation within all the variables in the dataset are:
+
+```{r}
+cor_mat = cor(data_r_numeric)
+heatmap(cor_mat)
+```
+
+There are some realtions that can be clearly watched in this graph by the dendrogram, such as the cameras, resolution and ROM with RAM.
+
+A first simple regression by a linear model:
+
+```{r}
+st_approach2 = lm(Price ~ Resolution.y, data = train_reg)
+summary(st_approach2)
+```
+
+The $R^2$ obtained is not that bad, only with the y resolution, we can explain over a third of the Price variability. The $R^2$ obtained between the predicted valuesand the actual values will be:
+
+```{r}
+cor(predict(st_approach2, newdata=test_reg),test_reg$Price)^2
+```
+
+Graph analysis:
+
+```{r}
+par(mfrow=c(2,2))
+plot(st_approach2, pch=23 ,bg='green',cex=2)
+```
+
+Will be better if we take the logarithm ?
+
+```{r}
+st_approach2_log = lm(Price ~ log(Resolution.y), data = train_reg)
+summary(st_approach2_log)
+```
+
+The $R^2$ obtained is not that bad, only with the y resolution, we can explain over a third of the Price variability. The $R^2$ obtained between the predicted valuesand the actual values will be:
+
+```{r}
+cor(predict(st_approach2_log, newdata=test_reg),test_reg$Price)^2
+```
+
+```{r}
+par(mfrow=c(4,2), mai = c(.5,.5,.5,.5))
+plot(st_approach2_log, pch=23 ,bg='green',cex=2,main = "Logarithmic approach",cex.caption = 1.2,cex.main = 1.2,cex.lab = 1.5,cex.lab = 1.5)
+plot(st_approach2, pch=23 ,bg='purple',cex=2, main = "Simple regression",,cex.caption = 1.2,cex.main = 1.2,cex.lab = 1.5,cex.lab = 1.5)
+```
+
+In this case the logarithm just make it worse to analyse the Price variability.
+
+This value is not higher than in the training test but it is not normal since the model is adjusted for the training dataset. But it is good to know that only with one variable we have a multiple $R^2$ of 27% with testing data.
+
+Now, lets going to apply a second regression but in this case involving multiple variables. The variables introduced in this case will be a mix of factors and numeric, but that will not give problems since each level of the factors will be a new parameter for the linear model.
+
+To estimate the coefficients, the goal is to minimize the sum of the squared errors between the predicted values of Y (using the regression equation) and the observed values of Y.
+
+Not to say that the formula follows:
+
+$$Y = b_0 + b_1*X_1 + b_2X_2 + ... + b_n_Xn$$ Where bs are the coefficients computed by the linear model.
+
+```{r}
+mult_reg = lm(Price ~ Resolution.y + both_cameras + Wi.Fi+ Battery.capacity..mAh.+Operating.system , data = train_reg)
+summary(mult_reg)
+```
+
+Now $R^2$ is increased in a 7% so it is achieved a notable increase of the explanation of the variability of Price.
+
+When testing with the test partition:
+
+```{r}
+cor(predict(mult_reg, newdata=test_reg),test_reg$Price)^2
+```
+
+Now let's get into deeper analysis:
+
+## Selection of the best regression subset
+
+```{r}
+library(olsrr)
+#model_fit = lm(Price ~ Resolution.y:Resolution.x + Rear.camera*Front.canera + X4g..LTE, Processor, Internal.storage..GB.*RAM..MB. +
+#                Battery.Capacity..mAh, data = train_reg)
+
+model_for_subsets = Price ~ Resolution.y:Resolution.x + Rear.camera*Front.camera + X4G..LTE + Processor + Internal.storage..GB.*RAM..MB. +
+             Battery.capacity..mAh.
+
+modelfit = lm(model_for_subsets, data = train_reg)
+
+#to perform all the possible combinations:
+ols_step_all_possible(modelfit)
+```
+
+There are 1023 combinations with the features chosen.
+
+So the best subsets for each criteria are:
+
+```{r}
+ols_step_best_subset(modelfit)
+```
+
+So now with forward based on the p-value got with each, let's plot the influence of the steps:
+
+```{r}
+ols_step_forward_p(modelfit)
+
+plot(ols_step_forward_p(modelfit))
+```
+
+It can be observed how the steps affect to the increase of the $R^2$, specially in step, 6 to 7 that is taken by the resolution combination that indeed it has been proved that is one of the most important features to predict values.
+
+Now let's see the evolution with the removal of some variables affecting the model:
+
+```{r}
+ols_step_backward_p(modelfit)
+
+plot(ols_step_backward_p(modelfit))
+```
+
+Now let see the same methods but focused on Akaike information Criterion
+
+AIC is calculated by the number of independent variables usedd to build the model joined with the MLE of the model so tries to reach the explanation of the greatest amount of variation with the less variables possible:
+
+```{r}
+ols_step_forward_aic(modelfit)
+
+plot(ols_step_forward_aic(modelfit), detail = T) #, color = "green"
+```
+
+Great acievement with Resolution feauters once again.
+
+It is clear then that we want the model with lowest AIC. And AIC is increased with the variables addition
+
+Now lets try backwards:
+
+```{r}
+ols_step_backward_aic(modelfit)
+
+plot(ols_step_backward_aic(modelfit), detail = T)
+```
+
+We can see that those variables are not that important to be removed because AIC is increased anyways.
+
+Now stepwise that consists on entering and removing predictors based on akaike information criteria, in a stepwise manner until there is no variable left to enter or remove any more.
+
+```{r}
+ols_step_backward_aic(modelfit)
+
+plot(ols_step_both_aic(modelfit), detail = T)
+```
+
+So it is consider that the reasonable model will be really similar to the prev, but with few changes:
+
+```{r}
+modelfit = lm(Price ~ Resolution.y:Resolution.x + Rear.camera*Front.camera + Screen.size..inches. + Processor + Internal.storage..GB.*RAM..MB.+
+                GPS, data = train_reg)
+plot(modelfit)
+
+summary(modelfit)
+
+#we are going to sabe this model for future algorithms
+model_final = Price ~ Resolution.y:Resolution.x + Rear.camera*Front.camera + Screen.size..inches. + Processor + Internal.storage..GB.*RAM..MB.+
+                GPS
+```
+
+It is important to see that the standard errors of the coefficients do not really include 0 in any of the variables.
+
+$R^2$ has improved now so the analysis has been worthy.
+
+Let see if the model still be as valuable for the testing set so:
+
+```{r}
+cor(predict(modelfit, newdata = test_reg), test_reg$Price)^2
+```
+
+The R-squared is really simillar so the model is not overfitted.
+
+The Root Mean Squared Error it is also valuable for watching the functionality of a model, it follows the formula:
+
+$$
+ RMSE = \sqrt{\frac{1}{n}\Sigma_{i=1}^{n}{\Big(y_i -\hat{y_i}\Big)^2}}
+$$
+
+So:
+
+```{r}
+#RMSE
+sqrt(mean((predict(modelfit, newdata = test_reg) - test_reg$Price)^2))
+```
+
+```{r}
+qplot(predict(modelfit, newdata = test_reg), test_reg$Price)+geom_abline(intercept = 0, slope = 1, color = "red")+
+  labs(x = "Predicted",y= "Observed",title = "Relation between observations and prediction")+xlim(c(0,600))+ylim(c(0,600))
+```
+
+## BENCHMARK
+
+Before performing more sophisticated analysis it is good to perform a Benchmark that is kind of the worst model that can be done for predicition, In this case, data is going to be predicted with the only reference of the mean so the $R^2$ will be or at least, should be the worse of our whole analysis.
+
+So the formula will be:
+
+$$Y_{prediction} = \beta_o | \beta_0 = \bar{y}$$
+
+```{r}
+intercept_value = mean(train_reg$Price)
+```
+
+```{r}
+# RMSE
+sqrt(mean((intercept_value- test_reg$Price)^2))
+```
+
+Obviously the root sum of squared errors is bigger in this case than in the previous model.
+
+## Statistical Learning algorithms
+
+We have to check some features that were analysed as correlated from the intital ggcorr graph, so it is seen that:
+
+```{r}
+cor(train_reg$Resolution.x,train_reg$Resolution.y)
+```
+
+Some of them can not really show correlations near to 1 but they are correlated in a not LINEAR way, so lets analyse the plot of storage within memory
+
+```{r}
+ggplot(train_reg)+aes(x = RAM..MB./1000, y =Internal.storage..GB.)+geom_point()+
+  geom_smooth()
+
+#The relation is almost linear
+
+cor(train_reg$RAM..MB.,train_reg$Internal.storage..GB.)
+
+```
+
+Those variables were already interacting between them in the previous model so:
+
+We set the validation process that is wanted to be followed as a Repeated Cross Validation
+
+This algorithm consists on the split of the data in k different folds or subsets. For k times, it selects all the folds as a training set except one, that is selected as a train set, and this test set, change every time we do this validation. When this process is finished we repeat it for the times setted by the "repeats" parameter. In this case, the k is 6, and repeats = 2,
+
+```{r}
+type_val = trainControl(method = "repeatedcv", number = 6, repeats = 2)
+```
+
+### LINEAR REGRESSION
+
+So now let see how does a completely linear model work with caret training function:
+
+```{r}
+lin_model = train(Price ~ Resolution.y + Resolution.x + Rear.camera + Front.camera + Processor + Internal.storage..GB., data = train_reg, 
+                 method = "lm", 
+                 preProc=c('scale', 'center'),
+                 trControl = type_val)
+lin_model
+```
+
+Lower R-squared than in the initial model since this one is made with simple linear combinations.
+
+In the teacher html it was consider to create a data frame to save the results, and i found it a good idea to select the best model at the end.
+
+```{r}
+results = data.frame(Price = test_reg$Price)
+```
+
+So the prediction of this model:
+
+```{r}
+results$lin_model = predict(lin_model, test_reg)
+```
+
+postResample function shows the behavior of the model with the test set, by three values(MAE(mean absolute error); R\^2; RMSE) so it is a good way to compare:
+
+```{r}
+postResample(results$lin_model,results$Price)
+```
+
+The relation between observation and prediction can be also seen in a graph.
+
+```{r}
+qplot(results$lin_model, results$Price, color = abs(results$lin_model-results$Price))+geom_abline(intercept = 0, slope = 1, color = "red")+
+  labs(x = "Predicted",y= "Observed",title = "Relation between observed and prediction")+xlim(c(0,400))+ylim(c(0,400))+scale_color_viridis_c(trans = "log", name = "|Pred-obs|")
+```
+
+As we can see, the data is not that well predicted since the red line is the ideal prediction and not all the points are really close to the line.
+
+Low price devices are better classified than the expensive ones. There is a high BIAS present.
+
+### Overfitted regression
+
+How would it work with more features included so the model will overfitts?
+
+```{r}
+levels(train_reg) = levels(data$Operating.system)
+
+ov_lin_model = train(Price ~ Resolution.y + Resolution.x + Rear.camera + Front.camera + Screen.size..inches. + Processor + Internal.storage..GB.+ RAM..MB.+ GPS + Operating.system+ Touchscreen+ Bluetooth, data = train_reg, 
+                 method = "lm", 
+                 preProc=c('scale', 'center'),
+                 trControl = type_val)
+
+ov_lin_model
+```
+
+Prediction
+
+```{r}
+results$ov_lin_model = predict(ov_lin_model, test_reg)
+postResample(results$ov_lin_model,results$Price)
+```
+
+The overfitted data describes better the variability than the simple linear model.
+
+The qplot is:
+
+```{r}
+qplot(results$ov_lin_model, results$Price, color = abs(results$ov_lin_model-results$Price))+geom_abline(intercept = 0, slope = 1, color = "red")+
+  labs(x = "Predicted",y= "Observed",title = "Relation between observed and prediction")+xlim(c(0,400))+ylim(c(0,400))+scale_color_viridis_c(trans = "log", name = "|Pred-obs|")
+```
+
+Little less bias appreciated since the values seems to be closer to the red line.
+
+Although this result is obtained, we need to remark that overfitting is used to be very dangerous because the coefficients are affected by lot of noise. Nonetheless, this model works better with this split than the normal linear regression
+
+### Forward Regression
+
+```{r}
+forw_model =train(model_final, data = train_reg, 
+                  preProc=c('scale', 'center'), method = "leapForward", 
+                  tuneGrid = expand.grid(nvmax =2:11), # maximum size of subsets to examine
+                  trControl = type_val)
+
+forw_model
+```
+
+So nvmax = 5 is chosen:
+
+```{r}
+plot(forw_model)
+```
+
+The RMSE it is clearly seen that reaches its minimum when there are only 5 predictors.
+
+The $R^2$ is not really increased in this proccedure, anyway lets see what 5 variables where chosen for predicting:
+
+```{r}
+coef(forw_model$finalModel,forw_model$bestTune$nvmax)
+```
+
+Finally the variables that affect the most are this 5. As seen previously Resolution mix and StoragevsMemory are the features that affeccts the most to Price in smartphones.
+
+```{r}
+results$forw_model = predict(forw_model, test_reg)
+postResample(results$forw_model,results$Price)
+```
+
+Rsquared slightly better in testing than in the model.
+
+```{r}
+qplot(results$forw_model, results$Price, color = abs(results$forw_model-results$Price))+geom_abline(intercept = 0, slope = 1, color = "red")+
+  labs(x = "Predicted",y= "Observed",title = "Relation between observed and prediction")+xlim(c(0,400))+ylim(c(0,400))+scale_color_viridis_c(trans = "log", name = "|Pred-obs|")
+```
+
+Not really appreciable improvement.
+
+### Stepwise & Backward Regression
+
+```{r}
+step_model = train(model_final, data = train_reg, 
+                  preProc=c('scale', 'center'), method = "leapSeq", 
+                  tuneGrid = expand.grid(nvmax =2:11), # maximum size of subsets to examine
+                  trControl = type_val)
+backw_model = train(model_final, data = train_reg, 
+                  preProc=c('scale', 'center'), method = "leapBackward", 
+                  tuneGrid = expand.grid(nvmax =2:11), # maximum size of subsets to examine
+                  trControl = type_val)
+step_model
+backw_model
+```
+
+Plotting the evolution of the models with the different number of predictors
+
+```{r}
+par(mfrow=c(2,2))
+plot(step_model, col ="red", main = "STEPWISE REGRESSION")
+plot(backw_model, col ="green", main = "BACKWARDS REGRESSION")
+```
+
+Variables selected in each
+
+```{r}
+#STEPWISE MODEL
+coef(step_model$finalModel,step_model$bestTune$nvmax)
+```
+
+It only selects the 3 most important variables of the regression
+
+```{r}
+#BACKWARDS MODEL
+coef(backw_model$finalModel,backw_model$bestTune$nvmax)
+```
+
+In this case the result is more than the same than in forward regression. 5 variables that are exactly the same.
+
+PREDICTION:
+
+```{r}
+results$backw_model = predict(backw_model, test_reg)
+results$step_model = predict(step_model, test_reg)
+
+print("BACKWARD REGRESSION")
+postResample(results$backw_model,results$Price)
+print("STEPWISE REGRESSION")
+postResample(results$step_model,results$Price)
+```
+
+Reallly similar values to previous analysis.
+
+Lets see the plots in order to see the differences. Using ggarrange() we are able to watch the graphs together:
+
+```{r}
+library(ggpubr)
+p = ggarrange(qplot(results$step_model, results$Price, color = abs(results$step_model-results$Price))+geom_abline(intercept = 0, slope = 1, color = "blue")+
+  labs(x = "Predicted",y= "Observed",title = "STEPWISE REGRESSION")+xlim(c(0,400))+ylim(c(0,400))+scale_color_viridis_c(trans = "log", name = "|Pred-obs|"),
+  qplot(results$backw_model, results$Price, color = abs(results$backw_model-results$Price))+geom_abline(intercept = 0, slope = 1, color = "red")+
+  labs(x = "Predicted",y= "Observed",title = "BACKWARDS REGRESSION")+xlim(c(0,400))+ylim(c(0,400))+scale_color_viridis_c(trans = "log", name = "|Pred-obs|")
+)
+annotate_figure(p,
+                top = text_grob("Comparison between Observed and predicted", color = "black", size = 18))
+```
+
+##PENALIZED REGRESSION ALGORITHMS \### RIDGE REGRESSION
+
+This regression is a type of regularization that imposes a penalty on the coefficients of the model to reduce their magnitude. it is useful because we can prevent overfitting and improve the generalization of the model with unseen data.
+
+We need to create a grid for the lambda hyperparameter. This hyperparameter controls the bias-variance tradeoff. Hence when lambda is 0, the penalty term has no effect, and ridge regression will produce the classical least square coefficients. However, as λ increases to infinite, the impact of the shrinkage penalty grows, and the ridge regression coefficients will get close zero.
+
+Caret package is going to be used although glm can also be used. Results with both libraries are really similar.
+
+```{r}
+library(elasticnet)
+grid_ridge_shrinkage = expand.grid(lambda = seq(0, 0.5, 0.002))
+
+#using caret package
+ridge_model = train(model_final, data = train_reg, tuneGrid = grid_ridge_shrinkage,method='ridge',
+                    preProc=c('scale','center'),trControl=type_val)
+ridge_model
+plot(ridge_model)
+```
+
+The graph show how the least RMSE is obtained near 0.05
+
+Lets see which lambda works the best for the RMSE to be the lowest possible
+
+```{r}
+ridge_model$bestTune
+```
+
+PREDICTIONS:
+
+```{r}
+results$ridge_model = predict(ridge_model, test_reg)
+postResample(results$ridge_model,results$Price)
+```
+
+###LASSO Regression
+
+This regression is another type of penalized regression.
+
+In this method, we have a penalty term that tries to make coefficients that do not affect deeply into the model, to reach 0.
+
+So:
+
+```{r}
+grid_lasso_shrinkage = expand.grid(fraction = seq(0, 1, 0.005))
+
+lasso_model = train(model_final, data = train_reg, tuneGrid = grid_lasso_shrinkage,method='lasso',
+                    preProc=c('scale','center'),trControl=type_val)
+lasso_model
+plot(lasso_model)
+```
+
+```{r}
+lasso_model$bestTune
+```
+
+PREDICTIONS:
+
+```{r}
+results$lasso_model = predict(lasso_model, test_reg)
+postResample(results$lasso_model,results$Price)
+```
+
+```{r}
+qplot(results$lasso_model, results$Price, color = abs(results$lasso_model-results$Price))+geom_abline(intercept = 0, slope = 1, color = "blue")+
+  labs(x = "Predicted",y= "Observed",title = "LASSO REGRESSION COMPARISON")+xlim(c(0,400))+ylim(c(0,400))+scale_color_viridis_c(trans = "log", name = "|Pred-obs|")
+```
+
+The 3 values have not improved until now. They present similar values in all this linear regressions. I guess that this is not going to be amazingly improved with linear formulas.
+
+###ELASTIC NET
+
+Finally, this its the last Penalized Regression algorithm that it is going to be tried since linear regression seems not to improve significantly the model.
+
+Elastic net is a model that combines properties of Ridge and Lasso models and tries to balance the simplicity and the minimization of the prediction error.
+
+As it is a combination, it takes the parameter of both algorithms to perform his.
+
+```{r}
+grid_elastic_shrinkage = expand.grid(alpha = seq(0, 0.5, 0.05), lambda = seq(0, 0.15, 0.01))
+
+elastic_model = train(model_final, data = train_reg, tuneGrid = grid_elastic_shrinkage,method='glmnet',
+                    preProc=c('scale','center'),trControl=type_val)
+
+elastic_model
+plot(elastic_model)
+```
+
+Alpha 0 seems to work better than the other alphas. Let's see then how it work in predcition
+
+The best combination of hyperparameters is:
+
+```{r}
+elastic_model$bestTune
+```
+
+Predicting:
+
+```{r}
+results$elastic_model = predict(elastic_model, test_reg)
+postResample(results$elastic_model,results$Price)
+
+#plotting values
+qplot(results$elastic_model, results$Price, color = abs(results$elastic_model-results$Price))+geom_abline(intercept = 0, slope = 1, color = "blue")+
+  labs(x = "Predicted",y= "Observed",title = "LASSO REGRESSION COMPARISON")+xlim(c(0,400))+ylim(c(0,400))+scale_color_viridis_c(trans = "log", name = "|Pred-obs|")
+```
+
+No great improvement needed.
+
+## MACHINE LEARNING
+
+Now lets see the performance with machine learning models such as knn algorithm and random Forest.
+
+### KNN
+
+The k-Nearest Neighbors (k-NN) is a regression algorithm that is based on the idea of identifying the k-nearest data points to a given input, and using the value of those points to make a prediction.
+
+It first calculates the distance between the new point and all the points in the training dataset.Then, it selects the k points in the training dataset that are closest to the new point and assigns the new point to the class that is most common among those k points.
+
+So knowing that we have to see the number of hyperparameters that we would need to optimize:
+
+```{r}
+modelLookup('kknn')
+```
+
+So lets fit the model:
+
+```{r}
+knn_model = train(model_final, data = train_reg, method = "kknn", preProc=c('scale','center'),
+                  tuneGrid = expand.grid(kmax=c(8,10,12,14,16,18,20,22),distance=c(1,2,3),kernel='optimal'),
+                  trControl=type_val)
+
+knn_model
+plot(knn_model)
+```
+
+```{r}
+results$knn_model = predict(knn_model, test_reg)
+postResample(results$knn_model,results$Price)
+```
+
+2% of achievement in the $R^2$ feature. Good reduction too in Mean Absolute error and RMSE.
+
+It is important to remark that this models are not linear so it is clear that it is a reason why we increase the R-squared that what stacked in the linear regression methods.
+
+### Random Forest
+
+This algorithm(that was already explained with Classification).
+
+The key on this algorithm is to train a large number of decision trees on random subsets of the data, and then average their predictions to make a final prediction. With classification it uses the class that appeared the most and with regression it computes the mean among all the decision tree results.
+
+I set a number of 400 trees to try decreasing the mistakes that can be done in some trees regression.
+
+```{r}
+rf_model = train(model_final, data = train_reg, method = "rf", preProc=c('scale','center'),ntree = 400,
+                  tuneGrid = data.frame(mtry=c(3,5,7,9,11)),
+                  trControl=type_val)
+rf_model
+plot(rf_model)
+```
+
+Great reduction in model RMSE, but will it remain with the testing set?
+
+Variable importance can be computed in this section too.
+
+```{r}
+plot(varImp(rf_model), col = rainbow(9))
+```
+
+The 2 first variables are indeed the most important during all the algorithms so it is not surprising. Furthermore, Resolution is almost Reaching 100 in importance. In the other hand, GPS is a variable that do not affect almost in anything in this method.
+
+PREDICTION:
+
+```{r}
+results$rf_model = predict(rf_model, test_reg)
+postResample(results$rf_model,results$Price)
+```
+
+More improvement with this algorithm. It is clear that non-regression is fittin better models.
+
+### Gradient Boosting
+
+Finally, the last method is gradient boosting. Also performed in Classification analysis.
+
+As a brief introduction, it works by fitting the base model to the data and then adding a new model that tries to correct the errors made by the previous model. The new model is trained using the residual errors of the previous model as the target variable. This process is repeated until a satisfactory model is obtained or a pre-defined number of models have been built.
+
+```{r}
+
+modelLookup('xgbTree')
+```
+
+```{r}
+# library(xgboost)
+# gb_grid = expand.grid(nrounds = 500, max_depth = c(5,6,7,8,9), eta = c(0.01, 0.1, 1),
+#                                          gamma = c(1, 2), colsample_bytree = 0.8,
+#                                          min_child_weight = 1, subsample = c(0.2,0.5,0.8))
+# gb_model = train(model_final, data = train_reg, method = "xgbTree", preProc=c('scale','center'),trControl = type_val, tuneGrid = gb_grid)
+
+```
+
+The time spent on these algorithm is far longer than usual, since it has to recompute the errors made. So as it did not finish after more than 4h executing, it was decided to be commented. PREDICTION:
+
+```{r}
+#results$gb_model <- predict(gb_model, test_reg)
+
+#postResample(pred = results$gb_model,  obs = results$Price)
+```
+
+## FINAL ELECTION
+
+Having all the algorithms performed, lets see which of them worked better on predicting. For that, lets analyse RMSE and MAE values:
+
+```{r}
+rmse_f <- function(pred) {
+  # Calculate the difference between the predictions and the actual values
+  diff <- pred - results$Price
+  # Calculate the squared error for each prediction
+  squared_error <- diff^2
+  # Calculate the mean squared error
+  mse <- mean(squared_error)
+  # Calculate the root mean squared error
+  rmse <- sqrt(mse)
+  return(rmse)
+}
+#RMSE
+print("RMSE")
+apply(results[-1], MARGIN = 2, rmse_f)
+#MAE
+print("MAE")
+apply(results[-1], MARGIN = 2, function(pred){mean(abs(pred - results$Price))})
+```
+
+```{r}
+#4 models chosen finally
+results$combination = (results$lasso_model + results$knn_mode + results$rf_model + results$forw_model)/4
+
+postResample(results$combination, results$Price)
+```
+
+Great values finally got for our dataset.
+
+Logically it does not get a really high Rsquared comparing with other performances in other dataset, but after all the algorithms tried on this dataset, and the low correlations that presented with the price, it is not that bad.
+
+```{r}
+hist(results$combination, col = "chartreuse3", main = "PRICE PREDICTION")
+```
+
+But lets see how are the errors distributed, the closest to zero, the better the model will have predicted, so:
+
+```{r}
+ggplot()+aes(x = results$combination-results$Price)+geom_density(alpha = 0.1, color = "green")+geom_histogram(color = "darkgreen",
+                                                                                                              fill = "chartreuse3", bins = 40)
+
+#Better to plot the absolute value.
+ggplot()+aes(x = abs(results$combination-results$Price))+geom_density(alpha = 0.1, color = "green")+geom_histogram(color = "darkgreen",
+                                                                                                              fill = "chartreuse3", bins = 40)+
+  labs(title = "ABSOLUTE ERROR")
+```
+
+It does not present such a huge error in predicting so it is good.
+
+LETS see the noise in the variables:
+
+```{r}
+#set as noise 
+noise = (results$combination-results$Price)[0:100]
+
+lower = results$combination[101:length(results$combination)] + quantile(noise,0.05, na.rm=T)
+upper = results$combination[101:length(results$combination)] + quantile(noise,0.95, na.rm=T)
+
+pred_final = data.frame(price = results$Price[101:length(results$Price)],
+                        predictions = results$combination[101:length(results$Price)],
+                        lower = lower,
+                        upper = upper)
+pred_final = pred_final %>% mutate(out = factor(ifelse(price<lower | price > upper,1,0)))
+
+mean(pred_final$out==1)
+
+```
+
+Really low percentage of observations are out of the 90% interval, so that are very good news.
+
+Finally lets polot all the data that were inside and outside of this interval:
+
+```{r}
+ggplot(pred_final)+ aes(x=predictions, y=price)+
+  geom_point(aes(color=out)) + geom_ribbon(aes(ymin=lower,ymax=upper),alpha=0.2, fill = "grey50") +
+  labs(title = "Prediction intervals", x = "Prediction",y="Real price")+
+  scale_color_discrete(type=c("purple","green"),labels = c("INSIDE","OUTSIDE"), name = "90% INTERVAL")
+```
+
+There can be appreciated very few data outside of the region, so the combination of the models, can be said that predicted more or less good the testing subset.
+
+We could modify the area by changing the limits/percentage of the confidence interval. In another words, if we want to predict better the smartphones Prices. But i really think that a 90% interval is big enough.
+
+# FINAL CONCLUSION
+
+This project helped me to understand clearly the different algoritms that can be applied in each of the sections of the duty.
+
+Classification part has been totally conditioned by the set of values I setted in the table as a company and somehow, some models did not perform that good in predicting since it was totally conditioned by the optimization of the "company" requirements. Moreover, the threshold was completely affected by that, so in some parts, results may have no sense. In spite of that, the models performed as it was expected.
+
+Important to say that I found that benchmarks are really important to set an initial point from which you start computing models.
+
+In the other side, Regression worked correctly and little by little, better models were achieved. It should be emphasised that the linear models produced over a 6% worse than machine learning algorithms.
+
+Finally, the model combination predicted data really good in the 90% confidence interval.
+
+# REFERENCIAS
+
+-   [https://www.pluralsight.com/guides/linear-lasso-and-ridge-regression-with-r](ttps://www.pluralsight.com/guides/linear-lasso-and-ridge-regression-with-r)
+
+-   <https://rpubs.com/arquez9512/599268>
+
+-   <https://stackoverflow.com/>
+
+-   <https://www.rdocumentation.org/>
+
+-   <https://www.statology.org/>
